@@ -275,6 +275,9 @@ function renderChart() {
 }
 
 async function exportPDF() {
+  const year = selectedMonth.value.getFullYear()
+  const month = selectedMonth.value.getMonth() + 1
+
   const loading = ElLoading.service({
     lock: true,
     text: '正在生成PDF报告...',
@@ -282,6 +285,18 @@ async function exportPDF() {
   })
 
   try {
+    if (window.electronAPI && window.electronAPI.generateMonthlyPdf) {
+      const result = await window.electronAPI.generateMonthlyPdf(year, month)
+      if (result.success) {
+        ElMessage.success('PDF报告导出成功：' + result.filePath)
+      } else if (result.canceled) {
+        ElMessage.info('已取消导出')
+      } else {
+        ElMessage.error('PDF导出失败：' + (result.message || '未知错误'))
+      }
+      return
+    }
+
     if (!monthlyData.value || !monthlyData.value.summary) {
       throw new Error('没有可用的报告数据，请先加载报告')
     }
@@ -293,7 +308,7 @@ async function exportPDF() {
 
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(20)
-    const title = '社区生鲜团购月度运营报告'
+    const title = 'Monthly Report'
     const titleWidth = doc.getTextWidth(title)
     doc.text(title, (pageWidth - titleWidth) / 2, yPos)
     yPos += 10
@@ -301,7 +316,7 @@ async function exportPDF() {
     doc.setFontSize(12)
     doc.setFont('helvetica', 'normal')
     doc.setTextColor(100, 100, 100)
-    const subtitle = reportMonth.value + ' 月度'
+    const subtitle = reportMonth.value
     const subtitleWidth = doc.getTextWidth(subtitle)
     doc.text(subtitle, (pageWidth - subtitleWidth) / 2, yPos)
     yPos += 15
@@ -314,20 +329,20 @@ async function exportPDF() {
     doc.setFontSize(14)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
-    doc.text('一、核心指标', margin, yPos)
+    doc.text('1. Key Metrics', margin, yPos)
     yPos += 10
 
     const summary = monthlyData.value.summary
     const metrics = [
-      ['总订单量', summary.totalOrders || 0, '环比 +12.5%'],
-      ['总营业额', '¥' + (summary.totalAmount || 0).toFixed(2), '环比 +8.3%'],
-      ['平均履约率', (summary.avgFulfillmentRate || 0).toFixed(1) + '%', '环比 +2.1%'],
-      ['平均损耗率', (summary.avgLossRate || 0).toFixed(2) + '%', '环比 -0.3%']
+      ['Total Orders', summary.totalOrders || 0, '+12.5%'],
+      ['Total Revenue', '$' + (summary.totalAmount || 0).toFixed(2), '+8.3%'],
+      ['Fulfillment Rate', (summary.avgFulfillmentRate || 0).toFixed(1) + '%', '+2.1%'],
+      ['Loss Rate', (summary.avgLossRate || 0).toFixed(2) + '%', '-0.3%']
     ]
 
     autoTable(doc, {
       startY: yPos,
-      head: [['指标名称', '数值', '同比变化']],
+      head: [['Metric', 'Value', 'Change']],
       body: metrics,
       headStyles: {
         fillColor: [64, 158, 255],
@@ -349,7 +364,7 @@ async function exportPDF() {
     if (chartInstance) {
       doc.setFontSize(14)
       doc.setFont('helvetica', 'bold')
-      doc.text('二、日订单与营业额趋势', margin, yPos)
+      doc.text('2. Daily Trend', margin, yPos)
       yPos += 8
 
       try {
@@ -365,20 +380,20 @@ async function exportPDF() {
         doc.setFontSize(11)
         doc.setFont('helvetica', 'normal')
         doc.setTextColor(150, 150, 150)
-        doc.text('（趋势图生成失败，以下展示前10天数据）', margin, yPos)
+        doc.text('(Chart unavailable, showing data table)', margin, yPos)
         yPos += 8
 
         const dailyData = monthlyData.value.dailyStats?.slice(0, 10) || []
         const trendBody = dailyData.map((d) => [
           d.stat_date?.slice(5) || '',
           d.total_orders || 0,
-          '¥' + (d.total_amount || 0).toFixed(2),
+          '$' + (d.total_amount || 0).toFixed(2),
           (d.fulfillment_rate || 0).toFixed(1) + '%'
         ])
 
         autoTable(doc, {
           startY: yPos,
-          head: [['日期', '订单量', '营业额', '履约率']],
+          head: [['Date', 'Orders', 'Revenue', 'Fulfillment']],
           body: trendBody,
           headStyles: {
             fillColor: [103, 194, 58],
@@ -395,7 +410,7 @@ async function exportPDF() {
     doc.setFontSize(14)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(0, 0, 0)
-    doc.text('三、各小区运营数据排行', margin, yPos)
+    doc.text('3. Community Ranking', margin, yPos)
     yPos += 8
 
     const communityBody = communityStats.value
@@ -404,13 +419,13 @@ async function exportPDF() {
         idx + 1,
         c.name,
         c.orders || 0,
-        '¥' + (c.amount || 0).toFixed(2),
+        '$' + (c.amount || 0).toFixed(2),
         getPercentage(c.amount) + '%'
       ])
 
     autoTable(doc, {
       startY: yPos,
-      head: [['排名', '小区名称', '订单量', '营业额', '占比']],
+      head: [['Rank', 'Community', 'Orders', 'Revenue', 'Share']],
       body: communityBody,
       headStyles: {
         fillColor: [230, 162, 60],
@@ -433,7 +448,7 @@ async function exportPDF() {
 
     doc.setFontSize(14)
     doc.setFont('helvetica', 'bold')
-    doc.text('四、运营分析', margin, yPos)
+    doc.text('4. Analysis', margin, yPos)
     yPos += 8
 
     doc.setFontSize(11)
@@ -441,11 +456,11 @@ async function exportPDF() {
     doc.setTextColor(60, 60, 60)
 
     const analysis = [
-      '1. 本月整体运营情况良好，订单量和营业额均实现双增长。',
-      '2. 阳光花园和金茂府两个小区表现突出，订单量占比超过50%。',
-      '3. 履约率持续提升，已接近95%的目标值。',
-      '4. 损耗率控制在合理范围内，较上月有所下降。',
-      '5. 建议：加强绿城家园小区的推广力度，提升订单量。'
+      '- Overall operations are good this month.',
+      '- Top communities contribute more than 50% of orders.',
+      '- Fulfillment rate continues to improve.',
+      '- Loss rate is well controlled.',
+      '- Recommendation: increase marketing for low-volume communities.'
     ]
 
     analysis.forEach((line, idx) => {
@@ -456,17 +471,17 @@ async function exportPDF() {
 
     doc.setFontSize(10)
     doc.setTextColor(150, 150, 150)
-    const footerText = '报告生成时间：' + new Date().toLocaleString('zh-CN')
+    const footerText = 'Generated: ' + new Date().toLocaleString()
     const footerWidth = doc.getTextWidth(footerText)
     doc.text(footerText, (pageWidth - footerWidth) / 2, 280)
 
-    const fileName = `社区生鲜团购运营报告_${reportMonth.value.replace('年', '-').replace('月', '')}.pdf`
+    const fileName = `Monthly_Report_${reportMonth.value}.pdf`
     doc.save(fileName)
 
-    ElMessage.success('PDF报告已成功导出：' + fileName)
+    ElMessage.success('PDF exported: ' + fileName)
   } catch (error) {
-    console.error('PDF导出失败:', error)
-    ElMessage.error('PDF导出失败：' + (error.message || '未知错误，请检查控制台'))
+    console.error('PDF export failed:', error)
+    ElMessage.error('PDF export failed: ' + (error.message || 'Unknown error'))
   } finally {
     loading.close()
   }

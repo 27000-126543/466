@@ -297,6 +297,10 @@ async function submitApply() {
     ElMessage.warning('请填写申请原因')
     return
   }
+  if (!applyForm.amount || applyForm.amount <= 0) {
+    ElMessage.warning('请填写申请金额')
+    return
+  }
 
   const leaderId = userStore.leaderId
   if (!leaderId) {
@@ -305,14 +309,29 @@ async function submitApply() {
   }
 
   if (window.electronAPI) {
-    const result = await window.electronAPI.createAfterSale({
-      ...applyForm,
-      leader_id: leaderId
-    })
-    if (result.success) {
-      ElMessage.success(applyForm.amount > 50 ? '申请已提交，等待主管审批' : '申请已提交')
-      showApplyDialog.value = false
-      loadAfterSales()
+    try {
+      const result = await window.electronAPI.createAfterSale({
+        ...applyForm,
+        leader_id: leaderId
+      })
+      if (result.success) {
+        if (result.needsApproval) {
+          ElMessage.success('申请已提交，已进入退款审批流程，请等待主管审核')
+        } else {
+          ElMessage.success('申请已提交')
+        }
+        showApplyDialog.value = false
+        applyForm.order_id = null
+        applyForm.type = 'refund'
+        applyForm.amount = 0
+        applyForm.reason = ''
+        loadAfterSales()
+      } else {
+        ElMessage.error(result.message || '提交失败，请重试')
+      }
+    } catch (e) {
+      console.error('提交售后申请失败:', e)
+      ElMessage.error('提交失败：' + (e.message || '未知错误'))
     }
   } else {
     ElMessage.success('申请已提交')

@@ -163,13 +163,30 @@
         <el-form-item label="商品明细">
           <div class="order-items">
             <el-table :data="newOrder.items" size="small" border>
-              <el-table-column prop="product_name" label="商品名称" />
-              <el-table-column prop="quantity" label="数量" width="80" />
-              <el-table-column prop="unit_price" label="单价" width="100">
-                <template #default="{ row }">¥{{ row.unit_price }}</template>
+              <el-table-column label="商品名称" min-width="160">
+                <template #default="{ row }">
+                  <el-select v-model="row.product_id" placeholder="选择商品" size="small" style="width: 100%;" @change="onProductChange(row)">
+                    <el-option
+                      v-for="p in products"
+                      :key="p.id"
+                      :label="p.name"
+                      :value="p.id"
+                    />
+                  </el-select>
+                </template>
               </el-table-column>
-              <el-table-column prop="subtotal" label="小计" width="100">
-                <template #default="{ row }">¥{{ row.subtotal }}</template>
+              <el-table-column label="数量" width="100">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.quantity" :min="1" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="单价(元)" width="120">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.unit_price" :min="0" :precision="2" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="小计(元)" width="110">
+                <template #default="{ row }">¥{{ row.subtotal?.toFixed(2) }}</template>
               </el-table-column>
               <el-table-column label="操作" width="60">
                 <template #default="{ $index }">
@@ -405,22 +422,81 @@ function removeItem(index) {
   newOrder.items.splice(index, 1)
 }
 
+function onProductChange(row) {
+  const product = products.value.find(p => p.id === row.product_id)
+  if (product) {
+    row.product_name = product.name
+    if (!row.unit_price || row.unit_price === 0) {
+      row.unit_price = product.price || 0
+    }
+    calcSubtotal(row)
+  }
+}
+
+function calcSubtotal(row) {
+  row.subtotal = Number(((row.unit_price || 0) * (row.quantity || 0)).toFixed(2))
+}
+
 async function submitOrder() {
   try {
+    if (!newOrder.leader_id) {
+      ElMessage.warning('请选择团长')
+      return
+    }
+    if (!newOrder.community_id) {
+      ElMessage.warning('请选择小区')
+      return
+    }
+    if (!newOrder.customer_name) {
+      ElMessage.warning('请输入客户姓名')
+      return
+    }
+    if (!newOrder.customer_phone) {
+      ElMessage.warning('请输入联系电话')
+      return
+    }
+    if (!newOrder.delivery_address) {
+      ElMessage.warning('请输入收货地址')
+      return
+    }
+    if (newOrder.items.length === 0) {
+      ElMessage.warning('请添加商品明细')
+      return
+    }
+    const invalidItems = newOrder.items.filter(item => !item.product_id || item.quantity <= 0)
+    if (invalidItems.length > 0) {
+      ElMessage.warning('请完善所有商品明细：选择商品且数量大于0')
+      return
+    }
+
     if (window.electronAPI) {
       const result = await window.electronAPI.createOrder(newOrder)
       if (result.success) {
         ElMessage.success('订单创建成功')
         showCreateDialog.value = false
+        resetNewOrder()
         loadOrders()
       }
     } else {
       ElMessage.success('订单创建成功')
       showCreateDialog.value = false
+      resetNewOrder()
     }
   } catch (e) {
-    ElMessage.error('创建失败')
+    console.error('创建订单失败:', e)
+    ElMessage.error('创建失败：' + (e.message || '未知错误'))
   }
+}
+
+function resetNewOrder() {
+  newOrder.leader_id = null
+  newOrder.community_id = null
+  newOrder.customer_name = ''
+  newOrder.customer_phone = ''
+  newOrder.delivery_address = ''
+  newOrder.deadline = ''
+  newOrder.remark = ''
+  newOrder.items = []
 }
 
 onMounted(() => {

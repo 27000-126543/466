@@ -158,29 +158,32 @@
         <el-form-item label="商品明细">
           <div class="items-container">
             <el-table :data="newOrder.items" border size="small">
-              <el-table-column prop="name" label="商品名称">
-              <template #default="{ row, $index }">
-                <el-select v-model="row.product_id" placeholder="选择商品" size="small" style="width: 100%;">
-                  <el-option
-                    v-for="p in products"
-                    :key="p.id"
-                    :label="p.name"
-                    :value="p.id"
-                  />
-                </el-select>
-              </template>
-            </el-table-column>
+              <el-table-column label="商品名称" min-width="160">
+                <template #default="{ row }">
+                  <el-select v-model="row.product_id" placeholder="选择商品" size="small" style="width: 100%;" @change="onProductChange(row)">
+                    <el-option
+                      v-for="p in products"
+                      :key="p.id"
+                      :label="p.name"
+                      :value="p.id"
+                    />
+                  </el-select>
+                </template>
+              </el-table-column>
               <el-table-column label="数量" width="120">
                 <template #default="{ row }">
-                  <el-input-number v-model="row.quantity" :min="1" size="small" />
+                  <el-input-number v-model="row.quantity" :min="1" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
                 </template>
               </el-table-column>
-              <el-table-column label="单价(元)" width="120">
+              <el-table-column label="单价(元)" width="130">
                 <template #default="{ row }">
-                  <el-input-number v-model="row.cost" :min="0" :precision="2" size="small" />
+                  <el-input-number v-model="row.unit_cost" :min="0" :precision="2" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="80">
+              <el-table-column label="小计(元)" width="110">
+                <template #default="{ row }">¥{{ row.subtotal?.toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="60">
                 <template #default="{ $index }">
                   <el-button type="danger" link size="small" @click="removeNewItem($index)">删除</el-button>
                 </template>
@@ -339,14 +342,30 @@ async function confirmReceive(row) {
 function addNewItem() {
   newOrder.items.push({
     product_id: null,
-    name: '',
+    product_name: '',
     quantity: 10,
-    cost: 0
+    unit_cost: 0,
+    subtotal: 0
   })
 }
 
 function removeNewItem(index) {
   newOrder.items.splice(index, 1)
+}
+
+function onProductChange(row) {
+  const product = products.value.find(p => p.id === row.product_id)
+  if (product) {
+    row.product_name = product.name
+    if (!row.unit_cost || row.unit_cost === 0) {
+      row.unit_cost = product.cost || product.price || 0
+    }
+    calcSubtotal(row)
+  }
+}
+
+function calcSubtotal(row) {
+  row.subtotal = Number(((row.unit_cost || 0) * (row.quantity || 0)).toFixed(2))
 }
 
 async function submitNewOrder() {
@@ -358,13 +377,36 @@ async function submitNewOrder() {
     ElMessage.warning('请添加商品')
     return
   }
-
-  if (window.electronAPI) {
-    await window.electronAPI.createPurchaseOrder(newOrder)
+  const invalidItems = newOrder.items.filter(item => !item.product_id || item.quantity <= 0)
+  if (invalidItems.length > 0) {
+    ElMessage.warning('请完善所有商品明细：选择商品且数量大于0')
+    return
   }
-  ElMessage.success('补货单已创建')
-  showCreateDialog.value = false
-  loadOrders()
+
+  try {
+    if (window.electronAPI) {
+      const result = await window.electronAPI.createPurchaseOrder(newOrder)
+      if (result && result.success) {
+        ElMessage.success('补货单已创建')
+        showCreateDialog.value = false
+        resetNewOrder()
+        loadOrders()
+      }
+    } else {
+      ElMessage.success('补货单已创建')
+      showCreateDialog.value = false
+      resetNewOrder()
+    }
+  } catch (e) {
+    console.error('创建补货单失败:', e)
+    ElMessage.error('创建失败：' + (e.message || '未知错误'))
+  }
+}
+
+function resetNewOrder() {
+  newOrder.supplier_id = null
+  newOrder.items = []
+  newOrder.remark = ''
 }
 
 function loadSuppliers() {
@@ -376,14 +418,23 @@ function loadSuppliers() {
   ]
 }
 
-function loadProducts() {
-  products.value = [
-    { id: 1, name: '有机白菜' },
-    { id: 2, name: '西红柿' },
-    { id: 3, name: '黄瓜' },
-    { id: 5, name: '红富士苹果' },
-    { id: 6, name: '香蕉' }
-  ]
+async function loadProducts() {
+  if (window.electronAPI) {
+    try {
+      products.value = await window.electronAPI.getProducts()
+    } catch (e) {
+      console.error('加载商品失败:', e)
+    }
+  }
+  if (!products.value || products.value.length === 0) {
+    products.value = [
+      { id: 1, name: '有机白菜', price: 3.5, cost: 1.8 },
+      { id: 2, name: '西红柿', price: 5.0, cost: 3.2 },
+      { id: 3, name: '黄瓜', price: 4.0, cost: 2.4 },
+      { id: 5, name: '红富士苹果', price: 8.0, cost: 5.0 },
+      { id: 6, name: '香蕉', price: 6.0, cost: 3.5 }
+    ]
+  }
 }
 
 onMounted(() => {

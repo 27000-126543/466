@@ -166,56 +166,122 @@ function getLatRange() {
 function getCommonOption() {
   const lngRange = getLngRange()
   const latRange = getLatRange()
+
+  const districtAreas = [
+    { name: '朝阳区', coords: [[116.42, 39.86], [116.55, 39.86], [116.58, 39.98], [116.48, 40.02], [116.40, 39.98]], color: 'rgba(230, 247, 255, 0.6)' },
+    { name: '海淀区', coords: [[116.22, 39.92], [116.38, 39.92], [116.40, 40.10], [116.25, 40.12], [116.20, 40.02]], color: 'rgba(240, 249, 235, 0.6)' },
+    { name: '丰台区', coords: [[116.20, 39.78], [116.40, 39.78], [116.42, 39.90], [116.28, 39.92], [116.20, 39.88]], color: 'rgba(254, 247, 228, 0.6)' },
+    { name: '东城区', coords: [[116.38, 39.88], [116.45, 39.88], [116.45, 39.95], [116.38, 39.95]], color: 'rgba(255, 240, 240, 0.5)' },
+    { name: '西城区', coords: [[116.32, 39.88], [116.38, 39.88], [116.38, 39.95], [116.32, 39.95]], color: 'rgba(240, 240, 255, 0.5)' },
+    { name: '昌平区', coords: [[116.15, 40.02], [116.35, 40.02], [116.38, 40.22], [116.18, 40.25], [116.10, 40.15]], color: 'rgba(235, 250, 250, 0.5)' }
+  ]
+
+  const roads = [
+    { name: '长安街', coords: [[116.25, 39.91], [116.52, 39.91]], width: 2, color: '#f0a020' },
+    { name: '二环路', coords: [[116.32, 39.84], [116.48, 39.84], [116.50, 39.95], [116.38, 39.98], [116.30, 39.92]], width: 2.5, color: '#e07020' },
+    { name: '三环路', coords: [[116.25, 39.80], [116.55, 39.80], [116.58, 39.98], [116.42, 40.02], [116.22, 39.95]], width: 2, color: '#c05010' },
+    { name: '八达岭高速', coords: [[116.30, 39.95], [116.28, 40.05], [116.25, 40.15], [116.22, 40.25]], width: 2, color: '#d06020' },
+    { name: '京通快速', coords: [[116.45, 39.90], [116.52, 39.89], [116.58, 39.88]], width: 2, color: '#d06020' },
+    { name: '中关村大街', coords: [[116.32, 39.92], [116.32, 40.02]], width: 1.5, color: '#e08030' }
+  ]
+
   return {
-    backgroundColor: {
-      type: 'radial',
-      x: 0.5,
-      y: 0.5,
-      r: 0.8,
-      colorStops: [
-        { offset: 0, color: '#f0f9ff' },
-        { offset: 1, color: '#e0f2fe' }
-      ]
-    },
+    backgroundColor: '#f5f5dc',
     tooltip: {
       trigger: 'item'
     },
     grid: {
-      left: 60,
-      right: 60,
-      top: 40,
-      bottom: 60
+      left: 10,
+      right: 10,
+      top: 10,
+      bottom: 10
     },
     xAxis: {
       type: 'value',
-      name: '经度',
+      show: false,
       min: lngRange[0],
-      max: lngRange[1],
-      splitLine: {
-        lineStyle: {
-          type: 'dashed',
-          color: '#dcdfe6'
-        }
-      },
-      axisLabel: {
-        formatter: '{value}°'
-      }
+      max: lngRange[1]
     },
     yAxis: {
       type: 'value',
-      name: '纬度',
+      show: false,
       min: latRange[0],
-      max: latRange[1],
-      splitLine: {
-        lineStyle: {
-          type: 'dashed',
-          color: '#dcdfe6'
-        }
+      max: latRange[1]
+    },
+    series: [
+      {
+        type: 'custom',
+        renderItem: function(params, api) {
+          return null
+        },
+        data: [0]
       },
-      axisLabel: {
-        formatter: '{value}°'
-      }
-    }
+      ...districtAreas.map(area => ({
+        type: 'custom',
+        name: area.name,
+        renderItem: function(params, api) {
+          const points = area.coords.map(coord => api.coord(coord))
+          return {
+            type: 'polygon',
+            shape: {
+              points: points
+            },
+            style: {
+              fill: area.color,
+              stroke: '#c0c0a0',
+              lineWidth: 1
+            }
+          }
+        },
+        data: [0],
+        silent: true
+      })),
+      ...roads.map(road => ({
+        type: 'custom',
+        name: road.name,
+        renderItem: function(params, api) {
+          const points = road.coords.map(coord => api.coord(coord))
+          return {
+            type: 'polyline',
+            shape: {
+              points: points
+            },
+            style: {
+              stroke: road.color,
+              lineWidth: road.width,
+              lineDash: road.name.includes('环') ? [0, 0] : [4, 4]
+            }
+          }
+        },
+        data: [0],
+        silent: true
+      })),
+      ...districtAreas.map(area => {
+        const centerLng = area.coords.reduce((s, c) => s + c[0], 0) / area.coords.length
+        const centerLat = area.coords.reduce((s, c) => s + c[1], 0) / area.coords.length
+        return {
+          type: 'custom',
+          name: area.name + '_label',
+          renderItem: function(params, api) {
+            const pos = api.coord([centerLng, centerLat])
+            return {
+              type: 'text',
+              x: pos[0],
+              y: pos[1],
+              style: {
+                text: area.name,
+                fill: '#666655',
+                font: 'bold 12px sans-serif',
+                textAlign: 'center',
+                textVerticalAlign: 'middle'
+              }
+            }
+          },
+          data: [0],
+          silent: true
+        }
+      }))
+    ]
   }
 }
 
@@ -229,57 +295,68 @@ function renderStationsMap() {
     id: s.id
   }))
 
+  const baseOption = getCommonOption()
+  const dataSeries = [
+    {
+      type: 'scatter',
+      symbolSize: function(val) {
+        return Math.max(20, val[2] * 2)
+      },
+      data: data.map(d => ({
+        ...d,
+        itemStyle: {
+          color: d.status === 'busy' ? '#f56c6c' : d.status === 'normal' ? '#409eff' : '#67c23a',
+          borderColor: '#fff',
+          borderWidth: 3,
+          shadowBlur: 6,
+          shadowColor: 'rgba(0,0,0,0.3)'
+        }
+      })),
+      label: {
+        show: true,
+        position: 'top',
+        formatter: '{b}',
+        fontSize: 12,
+        color: '#303133',
+        fontWeight: 600,
+        backgroundColor: 'rgba(255,255,255,0.85)',
+        padding: [2, 6],
+        borderRadius: 3
+      },
+      emphasis: {
+        label: { show: true, fontWeight: 'bold' },
+        itemStyle: {
+          shadowBlur: 15,
+          shadowColor: 'rgba(0,0,0,0.4)'
+        }
+      },
+      z: 10
+    },
+    {
+      type: 'effectScatter',
+      symbolSize: 8,
+      rippleEffect: { brushType: 'stroke', scale: 4 },
+      data: data.filter(d => d.status === 'busy').map(d => ({
+        ...d,
+        itemStyle: { color: '#f56c6c' }
+      })),
+      z: 11
+    }
+  ]
+
   const option = {
-    ...getCommonOption(),
+    ...baseOption,
     tooltip: {
       trigger: 'item',
       formatter: function(params) {
+        if (!params.data || !params.data.name) return ''
         return `<b>${params.name}</b><br/>
                 待配送: ${params.data.pendingCount}单<br/>
                 配送中: ${params.data.deliveringCount}单<br/>
                 状态: ${getStationStatusText(params.data.status)}`
       }
     },
-    series: [
-      {
-        type: 'scatter',
-        symbolSize: function(val) {
-          return Math.max(18, val[2] * 1.8)
-        },
-        data: data.map(d => ({
-          ...d,
-          itemStyle: {
-            color: d.status === 'busy' ? '#f56c6c' : d.status === 'normal' ? '#409eff' : '#67c23a',
-            borderColor: '#fff',
-            borderWidth: 2
-          }
-        })),
-        label: {
-          show: true,
-          position: 'top',
-          formatter: '{b}',
-          fontSize: 12,
-          color: '#303133',
-          fontWeight: 500
-        },
-        emphasis: {
-          label: { show: true, fontWeight: 'bold' },
-          itemStyle: {
-            shadowBlur: 10,
-            shadowColor: 'rgba(0,0,0,0.3)'
-          }
-        }
-      },
-      {
-        type: 'effectScatter',
-        symbolSize: 10,
-        rippleEffect: { brushType: 'stroke', scale: 3 },
-        data: data.filter(d => d.status === 'busy').map(d => ({
-          ...d,
-          itemStyle: { color: '#f56c6c' }
-        }))
-      }
-    ]
+    series: [...baseOption.series, ...dataSeries]
   }
 
   chartInstance.setOption(option, true)
@@ -296,12 +373,40 @@ function renderHeatmap() {
   const data = stations.value.map(s => [s.lng, s.lat, s.pendingCount + s.deliveringCount, s.name, s.id])
   const maxVal = Math.max(...data.map(d => d[2]), 10)
 
+  const baseOption = getCommonOption()
+  const dataSeries = [
+    {
+      name: '订单热力',
+      type: 'effectScatter',
+      symbolSize: function(val) {
+        return Math.max(30, val[2] * 3.5)
+      },
+      data: data.map(d => ({
+        value: d,
+        name: d[3],
+        id: d[4]
+      })),
+      label: {
+        show: true,
+        formatter: function(params) {
+          return params.data.name + '\n' + params.data.value[2] + '单'
+        },
+        fontSize: 11,
+        color: '#fff',
+        fontWeight: 'bold',
+        lineHeight: 16
+      },
+      z: 10
+    }
+  ]
+
   const option = {
-    ...getCommonOption(),
+    ...baseOption,
     tooltip: {
       trigger: 'item',
       formatter: function(params) {
-        return `<b>${params.data[3]}</b><br/>订单总量: ${params.data[2]}单`
+        if (!params.data || !params.data.name) return ''
+        return `<b>${params.data.name}</b><br/>订单总量: ${params.data.value[2]}单`
       }
     },
     visualMap: {
@@ -316,30 +421,7 @@ function renderHeatmap() {
       },
       dimension: 2
     },
-    series: [
-      {
-        name: '订单热力',
-        type: 'effectScatter',
-        symbolSize: function(val) {
-          return Math.max(25, val[2] * 3)
-        },
-        data: data.map(d => ({
-          value: d,
-          name: d[3],
-          id: d[4]
-        })),
-        label: {
-          show: true,
-          formatter: function(params) {
-            return params.data.name + '\n' + params.data.value[2] + '单'
-          },
-          fontSize: 11,
-          color: '#fff',
-          fontWeight: 'bold',
-          lineHeight: 16
-        }
-      }
-    ]
+    series: [...baseOption.series, ...dataSeries]
   }
 
   chartInstance.setOption(option, true)
@@ -360,11 +442,41 @@ function renderDensityMap() {
   }))
   const maxVal = Math.max(...data.map(d => d.value[2]), 10)
 
+  const baseOption = getCommonOption()
+  const dataSeries = [
+    {
+      name: '订单密度',
+      type: 'scatter',
+      symbol: 'circle',
+      symbolSize: function(val) {
+        return Math.max(35, val[2] * 5)
+      },
+      data: data,
+      label: {
+        show: true,
+        formatter: function(params) {
+          return params.name + '\n' + params.data.value[2] + '单'
+        },
+        fontSize: 12,
+        color: '#fff',
+        fontWeight: 'bold',
+        lineHeight: 16
+      },
+      itemStyle: {
+        borderColor: '#fff',
+        borderWidth: 3,
+        opacity: 0.85
+      },
+      z: 10
+    }
+  ]
+
   const option = {
-    ...getCommonOption(),
+    ...baseOption,
     tooltip: {
       trigger: 'item',
       formatter: function(params) {
+        if (!params.data || !params.data.name) return ''
         return `<b>${params.name}</b><br/>订单密度: ${params.data.value[2]} 单/平方公里`
       }
     },
@@ -379,32 +491,7 @@ function renderDensityMap() {
       },
       dimension: 2
     },
-    series: [
-      {
-        name: '订单密度',
-        type: 'scatter',
-        symbol: 'circle',
-        symbolSize: function(val) {
-          return Math.max(30, val[2] * 4)
-        },
-        data: data,
-        label: {
-          show: true,
-          formatter: function(params) {
-            return params.name + '\n' + params.data.value[2]
-          },
-          fontSize: 12,
-          color: '#fff',
-          fontWeight: 'bold',
-          lineHeight: 16
-        },
-        itemStyle: {
-          borderColor: '#fff',
-          borderWidth: 2,
-          opacity: 0.85
-        }
-      }
-    ]
+    series: [...baseOption.series, ...dataSeries]
   }
 
   chartInstance.setOption(option, true)

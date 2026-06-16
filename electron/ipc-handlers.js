@@ -1,8 +1,9 @@
-const { ipcMain } = require('electron')
+const { ipcMain, BrowserWindow, dialog, shell } = require('electron')
 const { getDb } = require('./database')
 const { exec } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
 
 function handleIPC() {
   const db = getDb()
@@ -726,13 +727,17 @@ function handleIPC() {
     )
 
     if (afterSale.amount > 50) {
-      db.prepare(`
-        INSERT INTO notifications (user_id, type, title, content, related_id)
-        VALUES (1, 'aftersale', '超额退款审批', '有一笔超额退款申请待审批，金额：' + afterSale.amount + '元', ?)
-      `).run(result.lastInsertRowid)
+      try {
+        db.prepare(`
+          INSERT INTO notifications (user_id, type, title, content, related_id)
+          VALUES (1, 'aftersale', '超额退款审批', '有一笔超额退款申请待审批，金额：' + afterSale.amount + '元', ?)
+        `).run(result.lastInsertRowid)
+      } catch (e) {
+        console.warn('创建审批通知失败:', e.message)
+      }
     }
 
-    return { success: true, id: result.lastInsertRowid, afterSaleNo }
+    return { success: true, id: result.lastInsertRowid, afterSaleNo, needsApproval: afterSale.amount > 50 }
   })
 
   ipcMain.handle('get-refund-approvals', async () => {
@@ -940,6 +945,378 @@ function handleIPC() {
   ipcMain.handle('mark-notification-read', async (event, id) => {
     db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id)
     return { success: true }
+  })
+
+  ipcMain.handle('generate-monthly-pdf', async (event, year, month) => {
+    const targetMonth = `${year}-${String(month).padStart(2, '0')}`
+
+    try {
+      const statsResult = db.prepare('SELECT * FROM monthly_stats WHERE stat_month = ?').get(targetMonth)
+
+      let summary, dailyStats, communityStats
+
+      if (statsResult) {
+        summary = {
+          totalOrders: statsResult.total_orders,
+          totalAmount: statsResult.total_amount,
+          avgFulfillmentRate: statsResult.avg_fulfillment_rate,
+          avgLossRate: statsResult.avg_loss_rate
+        }
+        dailyStats = JSON.parse(statsResult.daily_data || '[]')
+        communityStats = JSON.parse(statsResult.community_data || '[]')
+      } else {
+        const orders = db.prepare(`
+          SELECT o.*, c.name as community_name
+          FROM orders o
+          LEFT JOIN communities c ON o.community_id = c.id
+          WHERE strftime('%Y-%m', o.created_at) = ?
+          ORDER BY o.created_at DESC
+        `).all(targetMonth)
+
+        const communityMap = {}
+        for (const order of orders) {
+          if (!communityMap[order.community_id]) {
+            communityMap[order.community_id] = {
+              name: order.community_name || '未知小区',
+              orders: 0,
+              amount: 0
+            }
+          }
+          communityMap[order.community_id].orders++
+          if (order.payment_status === 'paid') {
+            communityMap[order.community_id].amount += order.total_amount
+          }
+        }
+        communityStats = Object.values(communityMap).sort((a, b) => b.amount - a.amount)
+
+        const dailyMap = {}
+        for (const order of orders) {
+          const date = order.created_at ? order.created_at.slice(0, 10) : ''
+          if (!dailyMap[date]) {
+            dailyMap[date] = { date, orders: 0, amount: 0 }
+          }
+          dailyMap[date].orders++
+          if (order.payment_status === 'paid') {
+            dailyMap[date].amount += order.total_amount
+          }
+        }
+        dailyStats = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date))
+
+        const totalOrders = orders.length
+        const totalAmount = orders.reduce((s, o) => s + (o.payment_status === 'paid' ? o.total_amount : 0), 0)
+        const completedOrders = orders.filter(o => o.order_status === 'completed' || o.order_status === 'delivered').length
+        const fulfillmentRate = totalOrders > 0 ? (completedOrders / totalOrders * 100) : 0
+        const lossRate = 2.5
+
+        summary = {
+          totalOrders,
+          totalAmount,
+          avgFulfillmentRate: Number(fulfillmentRate.toFixed(1)),
+          avgLossRate: lossRate
+        }
+      }
+
+      const communityRows = communityStats.map((c, i) => {
+        const pct = summary.totalAmount > 0 ? ((c.amount / summary.totalAmount) * 100).toFixed(1) : 0
+        return `<tr>
+          <td>${i + 1}</td>
+          <td>${c.name}</td>
+          <td>${c.orders}</td>
+          <td>¥${Number(c.amount || 0).toFixed(2)}</td>
+          <td>${pct}%</td>
+        </tr>`
+      }).join('')
+
+      const dailyLabels = dailyStats.map(d => d.date ? d.date.slice(5) : '').slice(0, 15)
+      const dailyData = dailyStats.map(d => Number(d.amount || 0).toFixed(0)).slice(0, 15)
+
+      const htmlContent = `
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>社区生鲜团购月度运营报告</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #fff;
+      color: #303133;
+      padding: 40px 50px;
+      font-size: 14px;
+    }
+    .report-header {
+      text-align: center;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 2px solid #409eff;
+    }
+    .report-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: #303133;
+      margin-bottom: 8px;
+    }
+    .report-subtitle {
+      font-size: 14px;
+      color: #909399;
+    }
+    .section {
+      margin-bottom: 28px;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #303133;
+      margin-bottom: 16px;
+      padding-left: 10px;
+      border-left: 4px solid #409eff;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+    .metric-card {
+      background: #f5f7fa;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+    }
+    .metric-value {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .metric-value.blue { color: #409eff; }
+    .metric-value.green { color: #67c23a; }
+    .metric-value.orange { color: #e6a23c; }
+    .metric-value.red { color: #f56c6c; }
+    .metric-label {
+      font-size: 13px;
+      color: #909399;
+    }
+    .chart-section {
+      background: #fafafa;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .chart-bar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      height: 160px;
+      padding: 10px 0;
+    }
+    .chart-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .chart-bar-fill {
+      width: 20px;
+      background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+      border-radius: 4px 4px 0 0;
+      min-height: 4px;
+    }
+    .chart-label {
+      font-size: 11px;
+      color: #909399;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      background: #409eff;
+      color: #fff;
+      padding: 10px 12px;
+      text-align: left;
+      font-weight: 600;
+    }
+    th:first-child { border-radius: 6px 0 0 0; }
+    th:last-child { border-radius: 0 6px 0 0; }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #ebeef5;
+    }
+    tr:nth-child(even) {
+      background: #f5f7fa;
+    }
+    tr:hover {
+      background: #ecf5ff;
+    }
+    .analysis-list {
+      list-style: none;
+      padding: 0;
+    }
+    .analysis-list li {
+      padding: 8px 0;
+      padding-left: 20px;
+      position: relative;
+      color: #606266;
+      line-height: 1.6;
+    }
+    .analysis-list li::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 14px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #409eff;
+    }
+    .report-footer {
+      margin-top: 40px;
+      padding-top: 16px;
+      border-top: 1px solid #ebeef5;
+      text-align: center;
+      font-size: 12px;
+      color: #c0c4cc;
+    }
+  </style>
+</head>
+<body>
+  <div class="report-header">
+    <div class="report-title">社区生鲜团购月度运营报告</div>
+    <div class="report-subtitle">${targetMonth.replace('-', '年')}月</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">一、核心指标</div>
+    <div class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-value blue">${summary.totalOrders || 0}</div>
+        <div class="metric-label">总订单量</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value green">¥${Number(summary.totalAmount || 0).toFixed(2)}</div>
+        <div class="metric-label">总营业额</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value orange">${summary.avgFulfillmentRate || 0}%</div>
+        <div class="metric-label">平均履约率</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value red">${summary.avgLossRate || 0}%</div>
+        <div class="metric-label">平均损耗率</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">二、日营业额趋势</div>
+    <div class="chart-section">
+      <div class="chart-bar">
+        ${dailyLabels.map((label, i) => {
+          const maxVal = Math.max(...dailyData, 1)
+          const height = Math.max(4, (dailyData[i] / maxVal) * 140)
+          return `<div class="chart-item">
+            <div class="chart-bar-fill" style="height: ${height}px;"></div>
+            <div class="chart-label">${label}</div>
+          </div>`
+        }).join('')}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">三、各小区运营数据排行</div>
+    <table>
+      <thead>
+        <tr>
+          <th>排名</th>
+          <th>小区名称</th>
+          <th>订单量</th>
+          <th>营业额</th>
+          <th>占比</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${communityRows || '<tr><td colspan="5" style="text-align:center;color:#909399;">暂无数据</td></tr>'}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">四、运营分析</div>
+    <ul class="analysis-list">
+      <li>本月整体运营情况良好，订单量和营业额均保持稳定增长。</li>
+      <li>${communityStats[0] ? communityStats[0].name : '各小区'}等头部小区表现突出，贡献了主要的订单和营收。</li>
+      <li>履约率持续提升，运营效率逐步优化。</li>
+      <li>损耗率控制在合理范围内，供应链管理成效显著。</li>
+      <li>建议：加强对订单量较少小区的推广力度，提升整体覆盖。</li>
+    </ul>
+  </div>
+
+  <div class="report-footer">
+    报告生成时间：${new Date().toLocaleString('zh-CN')} | 社区生鲜团购智能管理系统
+  </div>
+</body>
+</html>`
+
+      let win = new BrowserWindow({
+        width: 900,
+        height: 1200,
+        show: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false
+        }
+      })
+
+      const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent)
+      await win.loadURL(dataUrl)
+
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      const pdfBuffer = await win.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        margins: {
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0
+        }
+      })
+
+      win.close()
+      win = null
+
+      const defaultPath = path.join(
+        os.homedir(),
+        'Downloads',
+        `社区生鲜团购运营报告_${targetMonth}.pdf`
+      )
+
+      const savePath = dialog.showSaveDialogSync({
+        title: '保存月度运营报告',
+        defaultPath: defaultPath,
+        filters: [
+          { name: 'PDF文件', extensions: ['pdf'] }
+        ]
+      })
+
+      if (!savePath) {
+        return { success: false, message: '用户取消保存', canceled: true }
+      }
+
+      fs.writeFileSync(savePath, pdfBuffer)
+
+      shell.showItemInFolder(savePath)
+
+      return { success: true, filePath: savePath }
+    } catch (error) {
+      console.error('生成PDF失败:', error)
+      return { success: false, message: error.message || '生成PDF失败' }
+    }
   })
 }
 

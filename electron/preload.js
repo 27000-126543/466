@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDailyStats: (date) => ipcRenderer.invoke('get-daily-stats', date),
   getMonthlyStats: (year, month) => ipcRenderer.invoke('get-monthly-stats', year, month),
   exportMonthlyReport: (year, month) => ipcRenderer.invoke('export-monthly-report', year, month),
+  generateMonthlyPdf: (year, month) => ipcRenderer.invoke('generate-monthly-pdf', year, month),
 
   getMapHeatData: () => ipcRenderer.invoke('get-map-heat-data'),
   getStationStatus: () => ipcRenderer.invoke('get-station-status'),
