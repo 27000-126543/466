@@ -119,7 +119,7 @@
       </div>
     </div>
 
-    <el-dialog v-model="showCreateDialog" title="新增订单" width="600px">
+    <el-dialog v-model="showCreateDialog" title="新增订单" width="700px">
       <el-form :model="newOrder" label-width="100px">
         <el-row :gutter="20">
           <el-col :span="12">
@@ -136,23 +136,52 @@
         <el-form-item label="收货地址">
           <el-input v-model="newOrder.delivery_address" placeholder="请输入完整收货地址" />
         </el-form-item>
+        <el-form-item label="截止时间">
+          <el-date-picker
+            v-model="newOrder.deadline"
+            type="datetime"
+            placeholder="选择截止时间"
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="商品明细">
-          <el-table :data="newOrder.items" size="small" border>
-            <el-table-column prop="product_name" label="商品" />
-            <el-table-column label="数量" width="100">
-              <template #default="{ row }">
-                <el-input-number v-model="row.quantity" :min="1" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="70">
-              <template #default="{ $index }">
-                <el-button type="danger" link size="small" @click="removeItem($index)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-button type="primary" plain size="small" style="margin-top: 8px;" @click="addItem">
-            + 添加商品
-          </el-button>
+          <div class="order-items">
+            <el-table :data="newOrder.items" size="small" border>
+              <el-table-column label="商品名称" min-width="160">
+                <template #default="{ row }">
+                  <el-select v-model="row.product_id" placeholder="选择商品" size="small" style="width: 100%;" @change="onProductChange(row)">
+                    <el-option
+                      v-for="p in products"
+                      :key="p.id"
+                      :label="p.name"
+                      :value="p.id"
+                    />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="100">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.quantity" :min="1" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="单价(元)" width="120">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.unit_price" :min="0" :precision="2" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
+                </template>
+              </el-table-column>
+              <el-table-column label="小计(元)" width="110">
+                <template #default="{ row }">¥{{ row.subtotal?.toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="60">
+                <template #default="{ $index }">
+                  <el-button type="danger" link size="small" @click="removeItem($index)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-button type="primary" plain size="small" style="margin-top: 8px;" @click="addItem">
+              <el-icon><Plus /></el-icon>添加商品
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="newOrder.remark" type="textarea" :rows="2" />
@@ -178,6 +207,8 @@ const userStore = useUserStore()
 
 const orders = ref([])
 const loading = ref(false)
+const products = ref([])
+const communities = ref([])
 
 const filterForm = reactive({
   status: '',
@@ -195,6 +226,7 @@ const newOrder = reactive({
   customer_name: '',
   customer_phone: '',
   delivery_address: '',
+  deadline: '',
   items: [],
   remark: ''
 })
@@ -290,8 +322,10 @@ function editOrder(row) {
 function addItem() {
   newOrder.items.push({
     product_id: null,
-    product_name: '商品',
-    quantity: 1
+    product_name: '',
+    quantity: 1,
+    unit_price: 0,
+    subtotal: 0
   })
 }
 
@@ -299,14 +333,131 @@ function removeItem(index) {
   newOrder.items.splice(index, 1)
 }
 
-function submitOrder() {
-  ElMessage.success('订单提交成功，等待审核')
-  showCreateDialog.value = false
-  loadOrders()
+function onProductChange(row) {
+  const product = products.value.find(p => p.id === row.product_id)
+  if (product) {
+    row.product_name = product.name
+    if (!row.unit_price || row.unit_price === 0) {
+      row.unit_price = product.price || 0
+    }
+    calcSubtotal(row)
+  }
+}
+
+function calcSubtotal(row) {
+  row.subtotal = Number(((row.unit_price || 0) * (row.quantity || 0)).toFixed(2))
+}
+
+async function loadProducts() {
+  if (window.electronAPI) {
+    try {
+      products.value = await window.electronAPI.getProducts()
+    } catch (e) {
+      console.error('加载商品失败:', e)
+    }
+  }
+  if (!products.value || products.value.length === 0) {
+    products.value = [
+      { id: 1, name: '有机白菜', price: 3.5 },
+      { id: 2, name: '西红柿', price: 5.0 },
+      { id: 3, name: '黄瓜', price: 4.0 },
+      { id: 5, name: '红富士苹果', price: 8.0 },
+      { id: 6, name: '香蕉', price: 6.0 }
+    ]
+  }
+}
+
+async function loadCommunities() {
+  if (window.electronAPI) {
+    try {
+      communities.value = await window.electronAPI.getCommunities()
+    } catch (e) {
+      console.error('加载小区失败:', e)
+    }
+  }
+}
+
+function resetNewOrder() {
+  newOrder.customer_name = ''
+  newOrder.customer_phone = ''
+  newOrder.delivery_address = ''
+  newOrder.deadline = ''
+  newOrder.items = []
+  newOrder.remark = ''
+}
+
+async function submitOrder() {
+  try {
+    const leaderId = userStore.leaderId
+    if (!leaderId) {
+      ElMessage.warning('团长信息异常，请重新登录')
+      return
+    }
+    if (!newOrder.customer_name) {
+      ElMessage.warning('请输入客户姓名')
+      return
+    }
+    if (!newOrder.customer_phone) {
+      ElMessage.warning('请输入联系电话')
+      return
+    }
+    if (!newOrder.delivery_address) {
+      ElMessage.warning('请输入收货地址')
+      return
+    }
+    if (newOrder.items.length === 0) {
+      ElMessage.warning('请添加商品明细')
+      return
+    }
+    const invalidItems = newOrder.items.filter(item => !item.product_id || item.quantity <= 0)
+    if (invalidItems.length > 0) {
+      ElMessage.warning('请完善所有商品明细：选择商品且数量大于0')
+      return
+    }
+
+    const leaderInfo = userStore.user
+    let communityId = leaderInfo?.default_community_id || leaderInfo?.community_id
+    if (!communityId && communities.value.length > 0) {
+      communityId = communities.value[0].id
+    }
+
+    const orderPayload = {
+      leader_id: leaderId,
+      community_id: communityId,
+      customer_name: newOrder.customer_name,
+      customer_phone: newOrder.customer_phone,
+      delivery_address: newOrder.delivery_address,
+      deadline: newOrder.deadline || new Date(Date.now() + 86400000).toISOString().slice(0, 19).replace('T', ' '),
+      remark: newOrder.remark,
+      items: newOrder.items
+    }
+
+    if (window.electronAPI) {
+      const result = await window.electronAPI.createOrder(orderPayload)
+      if (result.success) {
+        ElMessage.success('订单提交成功，等待审核')
+        showCreateDialog.value = false
+        resetNewOrder()
+        loadOrders()
+      } else {
+        ElMessage.error(result.message || '订单提交失败')
+      }
+    } else {
+      ElMessage.success('订单提交成功（Mock模式）')
+      showCreateDialog.value = false
+      resetNewOrder()
+      loadOrders()
+    }
+  } catch (e) {
+    console.error('创建订单失败:', e)
+    ElMessage.error('创建失败：' + (e.message || '未知错误'))
+  }
 }
 
 onMounted(() => {
   loadOrders()
+  loadProducts()
+  loadCommunities()
 })
 </script>
 

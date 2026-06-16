@@ -235,8 +235,12 @@ async function loadOrders() {
   loading.value = true
   try {
     if (window.electronAPI) {
-      purchaseOrders.value = await window.electronAPI.getPurchaseOrders()
-    } else {
+      const params = {}
+      if (filterForm.status) params.status = filterForm.status
+      if (filterForm.supplierId) params.supplierId = filterForm.supplierId
+      purchaseOrders.value = await window.electronAPI.getPurchaseOrders(params)
+    }
+    if (!purchaseOrders.value || purchaseOrders.value.length === 0) {
       purchaseOrders.value = [
         {
           id: 1,
@@ -282,6 +286,12 @@ async function loadOrders() {
           ]
         }
       ]
+      if (filterForm.status) {
+        purchaseOrders.value = purchaseOrders.value.filter(o => o.status === filterForm.status)
+      }
+      if (filterForm.supplierId) {
+        purchaseOrders.value = purchaseOrders.value.filter(o => o.supplier_id === filterForm.supplierId)
+      }
     }
   } finally {
     loading.value = false

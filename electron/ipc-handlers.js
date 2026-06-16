@@ -337,13 +337,28 @@ function handleIPC() {
     return { success: true, id: result.lastInsertRowid }
   })
 
-  ipcMain.handle('get-purchase-orders', async () => {
+  ipcMain.handle('get-purchase-orders', async (event, params = {}) => {
+    let where = []
+    let args = []
+
+    if (params.status) {
+      where.push('po.status = ?')
+      args.push(params.status)
+    }
+    if (params.supplierId) {
+      where.push('po.supplier_id = ?')
+      args.push(params.supplierId)
+    }
+
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
+
     const orders = db.prepare(`
       SELECT po.*, s.name as supplier_name
       FROM purchase_orders po
       LEFT JOIN suppliers s ON po.supplier_id = s.id
+      ${whereSql}
       ORDER BY po.created_at DESC
-    `).all()
+    `).all(...args)
 
     for (const order of orders) {
       order.items = db.prepare(`
@@ -955,7 +970,7 @@ function handleIPC() {
 
       let summary, dailyStats, communityStats
 
-      if (statsResult) {
+      if (statsResult && statsResult.daily_data) {
         summary = {
           totalOrders: statsResult.total_orders,
           totalAmount: statsResult.total_amount,
@@ -964,7 +979,10 @@ function handleIPC() {
         }
         dailyStats = JSON.parse(statsResult.daily_data || '[]')
         communityStats = JSON.parse(statsResult.community_data || '[]')
-      } else {
+      }
+
+      if (!summary || !dailyStats || dailyStats.length === 0 || !communityStats || communityStats.length === 0) {
+        console.log('[PDF] 没有缓存数据，从订单表实时计算')
         const orders = db.prepare(`
           SELECT o.*, c.name as community_name
           FROM orders o
@@ -984,7 +1002,7 @@ function handleIPC() {
           }
           communityMap[order.community_id].orders++
           if (order.payment_status === 'paid') {
-            communityMap[order.community_id].amount += order.total_amount
+            communityMap[order.community_id].amount += Number(order.total_amount || 0)
           }
         }
         communityStats = Object.values(communityMap).sort((a, b) => b.amount - a.amount)
@@ -992,28 +1010,39 @@ function handleIPC() {
         const dailyMap = {}
         for (const order of orders) {
           const date = order.created_at ? order.created_at.slice(0, 10) : ''
+          if (!date) continue
           if (!dailyMap[date]) {
             dailyMap[date] = { date, orders: 0, amount: 0 }
           }
           dailyMap[date].orders++
           if (order.payment_status === 'paid') {
-            dailyMap[date].amount += order.total_amount
+            dailyMap[date].amount += Number(order.total_amount || 0)
           }
         }
         dailyStats = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date))
 
         const totalOrders = orders.length
-        const totalAmount = orders.reduce((s, o) => s + (o.payment_status === 'paid' ? o.total_amount : 0), 0)
+        const totalAmount = orders.reduce((s, o) => s + (o.payment_status === 'paid' ? Number(o.total_amount || 0) : 0), 0)
         const completedOrders = orders.filter(o => o.order_status === 'completed' || o.order_status === 'delivered').length
         const fulfillmentRate = totalOrders > 0 ? (completedOrders / totalOrders * 100) : 0
         const lossRate = 2.5
 
         summary = {
           totalOrders,
-          totalAmount,
+          totalAmount: Number(totalAmount.toFixed(2)),
           avgFulfillmentRate: Number(fulfillmentRate.toFixed(1)),
           avgLossRate: lossRate
         }
+      }
+
+      if (!dailyStats || dailyStats.length === 0) {
+        dailyStats = [
+          { date: `${targetMonth}-01`, orders: 0, amount: 0 },
+          { date: `${targetMonth}-15`, orders: 0, amount: 0 }
+        ]
+      }
+      if (!communityStats || communityStats.length === 0) {
+        communityStats = [{ name: '暂无小区数据', orders: 0, amount: 0 }]
       }
 
       const communityRows = communityStats.map((c, i) => {
@@ -1021,14 +1050,18 @@ function handleIPC() {
         return `<tr>
           <td>${i + 1}</td>
           <td>${c.name}</td>
-          <td>${c.orders}</td>
+          <td>${c.orders || 0}</td>
           <td>¥${Number(c.amount || 0).toFixed(2)}</td>
           <td>${pct}%</td>
         </tr>`
       }).join('')
 
       const dailyLabels = dailyStats.map(d => d.date ? d.date.slice(5) : '').slice(0, 15)
-      const dailyData = dailyStats.map(d => Number(d.amount || 0).toFixed(0)).slice(0, 15)
+      const dailyValues = dailyStats.map(d => Number(d.amount || 0)).slice(0, 15)
+      while (dailyLabels.length < 5) {
+        dailyLabels.push('-')
+        dailyValues.push(0)
+      }
 
       const htmlContent = `
 <!DOCTYPE html>
@@ -1040,7 +1073,7 @@ function handleIPC() {
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
       background: #fff;
       color: #303133;
       padding: 40px 50px;
@@ -1215,8 +1248,9 @@ function handleIPC() {
     <div class="chart-section">
       <div class="chart-bar">
         ${dailyLabels.map((label, i) => {
-          const maxVal = Math.max(...dailyData, 1)
-          const height = Math.max(4, (dailyData[i] / maxVal) * 140)
+          const maxVal = Math.max(...dailyValues, 1)
+          const val = Number(dailyValues[i] || 0)
+          const height = Math.max(4, (val / maxVal) * 140)
           return `<div class="chart-item">
             <div class="chart-bar-fill" style="height: ${height}px;"></div>
             <div class="chart-label">${label}</div>
@@ -1261,20 +1295,31 @@ function handleIPC() {
 </body>
 </html>`
 
+      console.log('[PDF] HTML内容长度:', htmlContent.length)
+
+      const tempHtmlPath = path.join(os.tmpdir(), `report_${targetMonth}_${Date.now()}.html`)
+      fs.writeFileSync(tempHtmlPath, htmlContent, 'utf-8')
+      console.log('[PDF] 临时HTML文件:', tempHtmlPath)
+
       let win = new BrowserWindow({
         width: 900,
         height: 1200,
         show: false,
         webPreferences: {
           contextIsolation: true,
-          nodeIntegration: false
+          nodeIntegration: false,
+          sandbox: false
         }
       })
 
-      const dataUrl = 'data:text/html;charset=utf-8,' + encodeURIComponent(htmlContent)
-      await win.loadURL(dataUrl)
+      win.on('error', (err) => {
+        console.error('[PDF] BrowserWindow错误:', err)
+      })
 
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await win.loadFile(tempHtmlPath)
+      console.log('[PDF] HTML加载完成')
+
+      await new Promise(resolve => setTimeout(resolve, 800))
 
       const pdfBuffer = await win.webContents.printToPDF({
         printBackground: true,
@@ -1289,6 +1334,14 @@ function handleIPC() {
 
       win.close()
       win = null
+
+      try {
+        fs.unlinkSync(tempHtmlPath)
+      } catch (e) {
+        console.warn('[PDF] 清理临时文件失败:', e.message)
+      }
+
+      console.log('[PDF] PDF Buffer大小:', pdfBuffer.length)
 
       const defaultPath = path.join(
         os.homedir(),
@@ -1309,8 +1362,13 @@ function handleIPC() {
       }
 
       fs.writeFileSync(savePath, pdfBuffer)
+      console.log('[PDF] 文件已保存:', savePath)
 
-      shell.showItemInFolder(savePath)
+      try {
+        shell.showItemInFolder(savePath)
+      } catch (e) {
+        console.warn('[PDF] 打开文件夹失败:', e.message)
+      }
 
       return { success: true, filePath: savePath }
     } catch (error) {

@@ -115,7 +115,7 @@
       </el-table>
     </div>
 
-    <el-dialog v-model="purchaseDialogVisible" title="生成补货订单" width="700px">
+    <el-dialog v-model="purchaseDialogVisible" title="生成补货订单" width="750px">
       <div class="purchase-header">
         <span>共 <b>{{ purchaseItems.length }}</b> 种商品需要补货</span>
         <el-button type="primary" size="small" @click="addPurchaseItem">
@@ -123,23 +123,34 @@
         </el-button>
       </div>
       <el-table :data="purchaseItems" border size="small">
-        <el-table-column prop="name" label="商品名称" />
-        <el-table-column label="补货数量" width="150">
+        <el-table-column label="商品名称" min-width="160">
           <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="1" size="small" />
+            <el-select v-model="row.product_id" placeholder="选择商品" size="small" style="width: 100%;" @change="onProductChange(row)">
+              <el-option
+                v-for="p in allProducts"
+                :key="p.id"
+                :label="p.name"
+                :value="p.id"
+              />
+            </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="单价(元)" width="120">
+        <el-table-column label="补货数量" width="140">
           <template #default="{ row }">
-            <el-input-number v-model="row.cost" :min="0" :precision="2" size="small" />
+            <el-input-number v-model="row.quantity" :min="1" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="单价(元)" width="130">
+          <template #default="{ row }">
+            <el-input-number v-model="row.unit_cost" :min="0" :precision="2" size="small" style="width: 100%;" @change="calcSubtotal(row)" />
           </template>
         </el-table-column>
         <el-table-column label="小计(元)" width="120">
           <template #default="{ row }">
-            ¥{{ (row.quantity * row.cost).toFixed(2) }}
+            ¥{{ (row.subtotal || 0).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="60">
           <template #default="{ $index }">
             <el-button type="danger" link size="small" @click="removePurchaseItem($index)">删除</el-button>
           </template>
@@ -173,14 +184,18 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   Bell, ShoppingCart, Refresh, Warning, TrendCharts, Goods, CircleCheck, Plus
 } from '@element-plus/icons-vue'
 
+const router = useRouter()
+
 const lowStockProducts = ref([])
 const loading = ref(false)
 const suppliers = ref([])
+const allProducts = ref([])
 
 const purchaseDialogVisible = ref(false)
 const purchaseItems = ref([])
@@ -188,7 +203,7 @@ const selectedSupplier = ref(null)
 const purchaseRemark = ref('')
 
 const totalStockValue = computed(() => {
-  return lowStockProducts.value.reduce((sum, p) => sum + p.stock * p.cost, 0)
+  return lowStockProducts.value.reduce((sum, p) => sum + p.stock * (p.cost || 0), 0)
 })
 
 const totalProductCount = ref(15)
@@ -198,7 +213,7 @@ const safeRate = computed(() => {
 })
 
 const totalPurchaseAmount = computed(() => {
-  return purchaseItems.value.reduce((sum, item) => sum + item.quantity * item.cost, 0)
+  return purchaseItems.value.reduce((sum, item) => sum + (item.subtotal || 0), 0)
 })
 
 async function loadData() {
@@ -206,7 +221,8 @@ async function loadData() {
   try {
     if (window.electronAPI) {
       lowStockProducts.value = await window.electronAPI.getLowStockProducts()
-    } else {
+    }
+    if (!lowStockProducts.value || lowStockProducts.value.length === 0) {
       lowStockProducts.value = [
         { id: 1, name: '有机白菜', category: '蔬菜', unit: '斤', stock: 30, safe_stock: 50, price: 3.5, cost: 1.8, supplier_name: '绿源蔬菜基地' },
         { id: 2, name: '西红柿', category: '蔬菜', unit: '斤', stock: 25, safe_stock: 40, price: 5.8, cost: 3.2, supplier_name: '绿源蔬菜基地' },
@@ -217,6 +233,27 @@ async function loadData() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAllProducts() {
+  if (window.electronAPI) {
+    try {
+      allProducts.value = await window.electronAPI.getProducts()
+    } catch (e) {
+      console.error('加载商品列表失败:', e)
+    }
+  }
+  if (!allProducts.value || allProducts.value.length === 0) {
+    allProducts.value = [
+      { id: 1, name: '有机白菜', category: '蔬菜', unit: '斤', stock: 30, safe_stock: 50, price: 3.5, cost: 1.8 },
+      { id: 2, name: '西红柿', category: '蔬菜', unit: '斤', stock: 25, safe_stock: 40, price: 5.8, cost: 3.2 },
+      { id: 3, name: '红富士苹果', category: '水果', unit: '斤', stock: 45, safe_stock: 60, price: 8.9, cost: 5.0 },
+      { id: 4, name: '黄瓜', category: '蔬菜', unit: '斤', stock: 35, safe_stock: 40, price: 4.5, cost: 2.4 },
+      { id: 5, name: '鸡蛋', category: '蛋类', unit: '盒', stock: 40, safe_stock: 60, price: 15.8, cost: 9.0 },
+      { id: 6, name: '香蕉', category: '水果', unit: '斤', stock: 55, safe_stock: 60, price: 6.8, cost: 3.5 },
+      { id: 7, name: '虾', category: '水产', unit: '斤', stock: 12, safe_stock: 25, price: 45.8, cost: 28.0 }
+    ]
   }
 }
 
@@ -231,32 +268,56 @@ function stockIn(row) {
   ElMessage.info('请前往库存管理进行入库操作')
 }
 
+function calcSubtotal(row) {
+  row.subtotal = Number(((row.unit_cost || 0) * (row.quantity || 0)).toFixed(2))
+}
+
+function onProductChange(row) {
+  const product = allProducts.value.find(p => p.id === row.product_id)
+  if (product) {
+    row.product_name = product.name
+    if (!row.unit_cost || row.unit_cost === 0) {
+      row.unit_cost = product.cost || 0
+    }
+    calcSubtotal(row)
+  }
+}
+
 function createSinglePurchase(row) {
+  const qty = Math.max(1, row.safe_stock - row.stock + 20)
+  const unitCost = row.cost || 0
   purchaseItems.value = [{
-    id: row.id,
-    name: row.name,
-    quantity: row.safe_stock - row.stock + 20,
-    cost: row.cost
+    product_id: row.id,
+    product_name: row.name,
+    quantity: qty,
+    unit_cost: unitCost,
+    subtotal: Number((qty * unitCost).toFixed(2))
   }]
   purchaseDialogVisible.value = true
 }
 
 function generatePurchaseOrder() {
-  purchaseItems.value = lowStockProducts.value.map(p => ({
-    id: p.id,
-    name: p.name,
-    quantity: p.safe_stock - p.stock + 20,
-    cost: p.cost
-  }))
+  purchaseItems.value = lowStockProducts.value.map(p => {
+    const qty = Math.max(1, p.safe_stock - p.stock + 20)
+    const unitCost = p.cost || 0
+    return {
+      product_id: p.id,
+      product_name: p.name,
+      quantity: qty,
+      unit_cost: unitCost,
+      subtotal: Number((qty * unitCost).toFixed(2))
+    }
+  })
   purchaseDialogVisible.value = true
 }
 
 function addPurchaseItem() {
   purchaseItems.value.push({
-    id: null,
-    name: '',
+    product_id: null,
+    product_name: '',
     quantity: 10,
-    cost: 0
+    unit_cost: 0,
+    subtotal: 0
   })
 }
 
@@ -269,17 +330,52 @@ async function submitPurchaseOrder() {
     ElMessage.warning('请选择供应商')
     return
   }
-
-  if (window.electronAPI) {
-    await window.electronAPI.createPurchaseOrder({
-      supplier_id: selectedSupplier.value,
-      items: purchaseItems.value,
-      remark: purchaseRemark.value
-    })
+  if (purchaseItems.value.length === 0) {
+    ElMessage.warning('请添加商品明细')
+    return
   }
-  ElMessage.success('补货订单已生成')
-  purchaseDialogVisible.value = false
-  loadData()
+  const invalidItems = purchaseItems.value.filter(item => !item.product_id || item.quantity <= 0)
+  if (invalidItems.length > 0) {
+    ElMessage.warning('请完善所有商品明细：选择商品且数量大于0')
+    return
+  }
+
+  try {
+    const orderPayload = {
+      supplier_id: selectedSupplier.value,
+      items: purchaseItems.value.map(item => ({
+        product_id: item.product_id,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        unit_cost: item.unit_cost,
+        subtotal: item.subtotal
+      })),
+      remark: purchaseRemark.value
+    }
+
+    if (window.electronAPI) {
+      const result = await window.electronAPI.createPurchaseOrder(orderPayload)
+      if (result && result.success) {
+        ElMessage.success('补货订单已生成')
+        purchaseDialogVisible.value = false
+        selectedSupplier.value = null
+        purchaseRemark.value = ''
+        purchaseItems.value = []
+        router.push('/inventory/purchase')
+      } else {
+        ElMessage.error(result?.message || '补货单生成失败')
+      }
+    } else {
+      ElMessage.success('补货订单已生成（Mock模式）')
+      purchaseDialogVisible.value = false
+      selectedSupplier.value = null
+      purchaseRemark.value = ''
+      purchaseItems.value = []
+    }
+  } catch (e) {
+    console.error('提交补货单失败:', e)
+    ElMessage.error('提交失败：' + (e.message || '未知错误'))
+  }
 }
 
 function loadSuppliers() {
@@ -293,6 +389,7 @@ function loadSuppliers() {
 
 onMounted(() => {
   loadData()
+  loadAllProducts()
   loadSuppliers()
 })
 </script>
