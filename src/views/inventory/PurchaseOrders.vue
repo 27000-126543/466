@@ -14,7 +14,7 @@
       <el-form :inline="true" :model="filterForm">
         <el-form-item label="订单状态">
           <el-select v-model="filterForm.status" placeholder="全部状态" clearable style="width: 140px">
-            <el-option label="待审核" value="pending" />
+            <el-option label="待发货" value="pending" />
             <el-option label="配送中" value="shipping" />
             <el-option label="已入库" value="received" />
             <el-option label="已取消" value="cancelled" />
@@ -234,14 +234,17 @@ const newOrder = reactive({
 async function loadOrders() {
   loading.value = true
   try {
+    let apiData = null
     if (window.electronAPI) {
       const params = {}
       if (filterForm.status) params.status = filterForm.status
       if (filterForm.supplierId) params.supplierId = filterForm.supplierId
-      purchaseOrders.value = await window.electronAPI.getPurchaseOrders(params)
+      apiData = await window.electronAPI.getPurchaseOrders(params)
     }
-    if (!purchaseOrders.value || purchaseOrders.value.length === 0) {
-      purchaseOrders.value = [
+    if (apiData && apiData.length > 0) {
+      purchaseOrders.value = apiData
+    } else {
+      let mockList = [
         {
           id: 1,
           purchase_no: 'PO240001',
@@ -287,11 +290,12 @@ async function loadOrders() {
         }
       ]
       if (filterForm.status) {
-        purchaseOrders.value = purchaseOrders.value.filter(o => o.status === filterForm.status)
+        mockList = mockList.filter(o => o.status === filterForm.status)
       }
       if (filterForm.supplierId) {
-        purchaseOrders.value = purchaseOrders.value.filter(o => o.supplier_id === filterForm.supplierId)
+        mockList = mockList.filter(o => o.supplier_id === filterForm.supplierId)
       }
+      purchaseOrders.value = mockList
     }
   } finally {
     loading.value = false
@@ -330,23 +334,48 @@ function viewDetail(row) {
 }
 
 async function confirmShipping(row) {
-  if (window.electronAPI) {
-    await window.electronAPI.updatePurchaseStatus(row.id, 'shipping')
+  try {
+    if (window.electronAPI) {
+      const result = await window.electronAPI.updatePurchaseStatus(row.id, 'shipping')
+      if (result && result.success) {
+        ElMessage.success('已确认发货')
+      } else {
+        ElMessage.error(result?.message || '操作失败')
+        return
+      }
+    } else {
+      ElMessage.success('已确认发货')
+    }
+    row.status = 'shipping'
+    detailVisible.value = false
+    loadOrders()
+  } catch (e) {
+    console.error('确认发货失败:', e)
+    ElMessage.error('操作失败：' + (e.message || '未知错误'))
   }
-  row.status = 'shipping'
-  ElMessage.success('已确认发货')
-  detailVisible.value = false
-  loadOrders()
 }
 
 async function confirmReceive(row) {
-  if (window.electronAPI) {
-    await window.electronAPI.updatePurchaseStatus(row.id, 'received')
+  try {
+    if (window.electronAPI) {
+      const result = await window.electronAPI.updatePurchaseStatus(row.id, 'received')
+      if (result && result.success) {
+        const itemSummary = (row.items || []).map(i => `${i.product_name || '商品'} +${i.quantity}`).join('、')
+        ElMessage.success(`已确认入库，库存已更新：${itemSummary || '无明细'}`)
+      } else {
+        ElMessage.error(result?.message || '入库失败')
+        return
+      }
+    } else {
+      ElMessage.success('已确认入库，库存已更新')
+    }
+    row.status = 'received'
+    detailVisible.value = false
+    loadOrders()
+  } catch (e) {
+    console.error('确认入库失败:', e)
+    ElMessage.error('操作失败：' + (e.message || '未知错误'))
   }
-  row.status = 'received'
-  ElMessage.success('已确认入库，库存已更新')
-  detailVisible.value = false
-  loadOrders()
 }
 
 function addNewItem() {

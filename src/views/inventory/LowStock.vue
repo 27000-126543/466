@@ -361,7 +361,7 @@ async function submitPurchaseOrder() {
         selectedSupplier.value = null
         purchaseRemark.value = ''
         purchaseItems.value = []
-        router.push('/inventory/purchase')
+        router.push('/purchase')
       } else {
         ElMessage.error(result?.message || '补货单生成失败')
       }
@@ -371,6 +371,7 @@ async function submitPurchaseOrder() {
       selectedSupplier.value = null
       purchaseRemark.value = ''
       purchaseItems.value = []
+      router.push('/purchase')
     }
   } catch (e) {
     console.error('提交补货单失败:', e)

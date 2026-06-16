@@ -401,17 +401,50 @@ function handleIPC() {
   })
 
   ipcMain.handle('update-purchase-status', async (event, id, status) => {
-    db.prepare('UPDATE purchase_orders SET status = ? WHERE id = ?').run(status, id)
+    try {
+      const prevResult = db.prepare('SELECT status FROM purchase_orders WHERE id = ?').get(id)
+      const prevStatus = prevResult?.status
 
-    if (status === 'received') {
-      const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_order_id = ?').all(id)
-      const updateStock = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?')
-      for (const item of items) {
-        updateStock.run(item.quantity, item.product_id)
+      if (prevStatus === 'received' && status === 'received') {
+        return { success: true, message: '订单已入库，无需重复操作' }
       }
-    }
 
-    return { success: true }
+      db.prepare('UPDATE purchase_orders SET status = ? WHERE id = ?').run(status, id)
+
+      if (status === 'received') {
+        const items = db.prepare(`
+          SELECT pi.*, p.name as product_name
+          FROM purchase_items pi
+          LEFT JOIN products p ON pi.product_id = p.id
+          WHERE pi.purchase_order_id = ?
+        `).all(id)
+
+        console.log('[补货入库] 开始处理，商品数量:', items.length)
+
+        const updateStock = db.prepare('UPDATE products SET stock = stock + ? WHERE id = ?')
+        const getProduct = db.prepare('SELECT id, name, stock FROM products WHERE id = ?')
+
+        for (const item of items) {
+          if (item.product_id) {
+            const product = getProduct.get(item.product_id)
+            if (product) {
+              const qty = Number(item.quantity || 0)
+              updateStock.run(qty, item.product_id)
+              const updated = getProduct.get(item.product_id)
+              console.log(`  - ${product.name || '商品#'+item.product_id}: ${product.stock} + ${qty} = ${updated.stock}`)
+            } else {
+              console.warn(`  - 商品ID ${item.product_id} 不存在，跳过`)
+            }
+          }
+        }
+        console.log('[补货入库] 库存更新完成')
+      }
+
+      return { success: true }
+    } catch (error) {
+      console.error('更新补货单状态失败:', error)
+      return { success: false, message: error.message || '更新失败' }
+    }
   })
 
   ipcMain.handle('get-deliveries', async () => {
@@ -962,83 +995,116 @@ function handleIPC() {
     return { success: true }
   })
 
-  ipcMain.handle('generate-monthly-pdf', async (event, year, month) => {
+  ipcMain.handle('generate-monthly-pdf', async (event, payload) => {
+    const year = payload?.year || new Date().getFullYear()
+    const month = payload?.month || (new Date().getMonth() + 1)
     const targetMonth = `${year}-${String(month).padStart(2, '0')}`
 
     try {
-      const statsResult = db.prepare('SELECT * FROM monthly_stats WHERE stat_month = ?').get(targetMonth)
-
       let summary, dailyStats, communityStats
 
-      if (statsResult && statsResult.daily_data) {
-        summary = {
-          totalOrders: statsResult.total_orders,
-          totalAmount: statsResult.total_amount,
-          avgFulfillmentRate: statsResult.avg_fulfillment_rate,
-          avgLossRate: statsResult.avg_loss_rate
+      if (payload && payload.summary && payload.dailyStats && payload.communityStats) {
+        console.log('[PDF] 使用前端传入的数据')
+        summary = payload.summary
+        dailyStats = payload.dailyStats
+        communityStats = payload.communityStats
+      } else {
+        console.log('[PDF] 前端未传数据，尝试从数据库读取')
+
+        let statsResult = null
+        try {
+          statsResult = db.prepare('SELECT * FROM monthly_stats WHERE stat_month = ?').get(targetMonth)
+        } catch (e) {
+          console.warn('[PDF] 读取 monthly_stats 表失败:', e.message)
         }
-        dailyStats = JSON.parse(statsResult.daily_data || '[]')
-        communityStats = JSON.parse(statsResult.community_data || '[]')
-      }
 
-      if (!summary || !dailyStats || dailyStats.length === 0 || !communityStats || communityStats.length === 0) {
-        console.log('[PDF] 没有缓存数据，从订单表实时计算')
-        const orders = db.prepare(`
-          SELECT o.*, c.name as community_name
-          FROM orders o
-          LEFT JOIN communities c ON o.community_id = c.id
-          WHERE strftime('%Y-%m', o.created_at) = ?
-          ORDER BY o.created_at DESC
-        `).all(targetMonth)
+        if (statsResult && statsResult.daily_data) {
+          summary = {
+            totalOrders: statsResult.total_orders,
+            totalAmount: statsResult.total_amount,
+            avgFulfillmentRate: statsResult.avg_fulfillment_rate,
+            avgLossRate: statsResult.avg_loss_rate
+          }
+          try {
+            dailyStats = JSON.parse(statsResult.daily_data || '[]')
+            communityStats = JSON.parse(statsResult.community_data || '[]')
+          } catch (e) {
+            console.warn('[PDF] 解析缓存JSON失败:', e.message)
+            dailyStats = null
+            communityStats = null
+          }
+        }
 
-        const communityMap = {}
-        for (const order of orders) {
-          if (!communityMap[order.community_id]) {
-            communityMap[order.community_id] = {
-              name: order.community_name || '未知小区',
-              orders: 0,
-              amount: 0
+        if (!summary || !dailyStats || dailyStats.length === 0 || !communityStats || communityStats.length === 0) {
+          console.log('[PDF] 从订单表实时计算')
+          let orders = []
+          try {
+            orders = db.prepare(`
+              SELECT o.*, c.name as community_name
+              FROM orders o
+              LEFT JOIN communities c ON o.community_id = c.id
+              WHERE strftime('%Y-%m', o.created_at) = ?
+              ORDER BY o.created_at DESC
+            `).all(targetMonth)
+          } catch (e) {
+            console.warn('[PDF] 读取 orders 表失败:', e.message)
+          }
+
+          const communityMap = {}
+          for (const order of orders) {
+            if (!communityMap[order.community_id]) {
+              communityMap[order.community_id] = {
+                name: order.community_name || '未知小区',
+                orders: 0,
+                amount: 0
+              }
+            }
+            communityMap[order.community_id].orders++
+            if (order.payment_status === 'paid') {
+              communityMap[order.community_id].amount += Number(order.total_amount || 0)
             }
           }
-          communityMap[order.community_id].orders++
-          if (order.payment_status === 'paid') {
-            communityMap[order.community_id].amount += Number(order.total_amount || 0)
-          }
-        }
-        communityStats = Object.values(communityMap).sort((a, b) => b.amount - a.amount)
+          communityStats = Object.values(communityMap).sort((a, b) => b.amount - a.amount)
 
-        const dailyMap = {}
-        for (const order of orders) {
-          const date = order.created_at ? order.created_at.slice(0, 10) : ''
-          if (!date) continue
-          if (!dailyMap[date]) {
-            dailyMap[date] = { date, orders: 0, amount: 0 }
+          const dailyMap = {}
+          for (const order of orders) {
+            const date = order.created_at ? order.created_at.slice(0, 10) : ''
+            if (!date) continue
+            if (!dailyMap[date]) {
+              dailyMap[date] = { date, orders: 0, amount: 0 }
+            }
+            dailyMap[date].orders++
+            if (order.payment_status === 'paid') {
+              dailyMap[date].amount += Number(order.total_amount || 0)
+            }
           }
-          dailyMap[date].orders++
-          if (order.payment_status === 'paid') {
-            dailyMap[date].amount += Number(order.total_amount || 0)
+          dailyStats = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date))
+
+          const totalOrders = orders.length
+          const totalAmount = orders.reduce((s, o) => s + (o.payment_status === 'paid' ? Number(o.total_amount || 0) : 0), 0)
+          const completedOrders = orders.filter(o => o.order_status === 'completed' || o.order_status === 'delivered').length
+          const fulfillmentRate = totalOrders > 0 ? (completedOrders / totalOrders * 100) : 0
+          const lossRate = 2.5
+
+          summary = {
+            totalOrders,
+            totalAmount: Number(totalAmount.toFixed(2)),
+            avgFulfillmentRate: Number(fulfillmentRate.toFixed(1)),
+            avgLossRate: lossRate
           }
-        }
-        dailyStats = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date))
-
-        const totalOrders = orders.length
-        const totalAmount = orders.reduce((s, o) => s + (o.payment_status === 'paid' ? Number(o.total_amount || 0) : 0), 0)
-        const completedOrders = orders.filter(o => o.order_status === 'completed' || o.order_status === 'delivered').length
-        const fulfillmentRate = totalOrders > 0 ? (completedOrders / totalOrders * 100) : 0
-        const lossRate = 2.5
-
-        summary = {
-          totalOrders,
-          totalAmount: Number(totalAmount.toFixed(2)),
-          avgFulfillmentRate: Number(fulfillmentRate.toFixed(1)),
-          avgLossRate: lossRate
         }
       }
 
+      if (!summary) {
+        summary = { totalOrders: 0, totalAmount: 0, avgFulfillmentRate: 0, avgLossRate: 2.5 }
+      }
       if (!dailyStats || dailyStats.length === 0) {
         dailyStats = [
           { date: `${targetMonth}-01`, orders: 0, amount: 0 },
-          { date: `${targetMonth}-15`, orders: 0, amount: 0 }
+          { date: `${targetMonth}-08`, orders: 0, amount: 0 },
+          { date: `${targetMonth}-15`, orders: 0, amount: 0 },
+          { date: `${targetMonth}-22`, orders: 0, amount: 0 },
+          { date: `${targetMonth}-28`, orders: 0, amount: 0 }
         ]
       }
       if (!communityStats || communityStats.length === 0) {
@@ -1049,7 +1115,7 @@ function handleIPC() {
         const pct = summary.totalAmount > 0 ? ((c.amount / summary.totalAmount) * 100).toFixed(1) : 0
         return `<tr>
           <td>${i + 1}</td>
-          <td>${c.name}</td>
+          <td>${c.name || '未知'}</td>
           <td>${c.orders || 0}</td>
           <td>¥${Number(c.amount || 0).toFixed(2)}</td>
           <td>${pct}%</td>
@@ -1323,13 +1389,7 @@ function handleIPC() {
 
       const pdfBuffer = await win.webContents.printToPDF({
         printBackground: true,
-        pageSize: 'A4',
-        margins: {
-          top: 0,
-          bottom: 0,
-          left: 0,
-          right: 0
-        }
+        pageSize: 'A4'
       })
 
       win.close()

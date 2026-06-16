@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProducts: () => ipcRenderer.invoke('get-products'),
   createProduct: (product) => ipcRenderer.invoke('create-product', product),
 
-  getPurchaseOrders: () => ipcRenderer.invoke('get-purchase-orders'),
+  getPurchaseOrders: (params) => ipcRenderer.invoke('get-purchase-orders', params),
   createPurchaseOrder: (order) => ipcRenderer.invoke('create-purchase-order', order),
   updatePurchaseStatus: (id, status) => ipcRenderer.invoke('update-purchase-status', id, status),
 
@@ -49,7 +49,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDailyStats: (date) => ipcRenderer.invoke('get-daily-stats', date),
   getMonthlyStats: (year, month) => ipcRenderer.invoke('get-monthly-stats', year, month),
   exportMonthlyReport: (year, month) => ipcRenderer.invoke('export-monthly-report', year, month),
-  generateMonthlyPdf: (year, month) => ipcRenderer.invoke('generate-monthly-pdf', year, month),
+  generateMonthlyPdf: (payload) => ipcRenderer.invoke('generate-monthly-pdf', payload),
 
   getMapHeatData: () => ipcRenderer.invoke('get-map-heat-data'),
   getStationStatus: () => ipcRenderer.invoke('get-station-status'),
