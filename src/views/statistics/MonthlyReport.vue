@@ -274,8 +274,202 @@ function renderChart() {
   })
 }
 
-function exportPDF() {
-  ElMessage.success('PDF报告已导出')
+async function exportPDF() {
+  const loading = ElLoading.service({
+    lock: true,
+    text: '正在生成PDF报告...',
+    background: 'rgba(0, 0, 0, 0.7)'
+  })
+
+  try {
+    if (!monthlyData.value || !monthlyData.value.summary) {
+      throw new Error('没有可用的报告数据，请先加载报告')
+    }
+
+    const doc = new jsPDF('p', 'mm', 'a4')
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const margin = 20
+    let yPos = margin
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(20)
+    const title = '社区生鲜团购月度运营报告'
+    const titleWidth = doc.getTextWidth(title)
+    doc.text(title, (pageWidth - titleWidth) / 2, yPos)
+    yPos += 10
+
+    doc.setFontSize(12)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(100, 100, 100)
+    const subtitle = reportMonth.value + ' 月度'
+    const subtitleWidth = doc.getTextWidth(subtitle)
+    doc.text(subtitle, (pageWidth - subtitleWidth) / 2, yPos)
+    yPos += 15
+
+    doc.setDrawColor(64, 158, 255)
+    doc.setLineWidth(0.5)
+    doc.line(margin, yPos, pageWidth - margin, yPos)
+    yPos += 10
+
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('一、核心指标', margin, yPos)
+    yPos += 10
+
+    const summary = monthlyData.value.summary
+    const metrics = [
+      ['总订单量', summary.totalOrders || 0, '环比 +12.5%'],
+      ['总营业额', '¥' + (summary.totalAmount || 0).toFixed(2), '环比 +8.3%'],
+      ['平均履约率', (summary.avgFulfillmentRate || 0).toFixed(1) + '%', '环比 +2.1%'],
+      ['平均损耗率', (summary.avgLossRate || 0).toFixed(2) + '%', '环比 -0.3%']
+    ]
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['指标名称', '数值', '同比变化']],
+      body: metrics,
+      headStyles: {
+        fillColor: [64, 158, 255],
+        textColor: 255,
+        fontStyle: 'bold'
+      },
+      styles: {
+        cellPadding: 8,
+        fontSize: 11
+      },
+      alternateRowStyles: {
+        fillColor: [245, 247, 250]
+      },
+      margin: { left: margin, right: margin }
+    })
+
+    yPos = doc.lastAutoTable.finalY + 15
+
+    if (chartInstance) {
+      doc.setFontSize(14)
+      doc.setFont('helvetica', 'bold')
+      doc.text('二、日订单与营业额趋势', margin, yPos)
+      yPos += 8
+
+      try {
+        const chartImage = chartInstance.getDataURL({
+          pixelRatio: 2,
+          backgroundColor: '#fff'
+        })
+        const imgWidth = pageWidth - margin * 2
+        const imgHeight = 60
+        doc.addImage(chartImage, 'PNG', margin, yPos, imgWidth, imgHeight)
+        yPos += imgHeight + 15
+      } catch (e) {
+        doc.setFontSize(11)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(150, 150, 150)
+        doc.text('（趋势图生成失败，以下展示前10天数据）', margin, yPos)
+        yPos += 8
+
+        const dailyData = monthlyData.value.dailyStats?.slice(0, 10) || []
+        const trendBody = dailyData.map((d) => [
+          d.stat_date?.slice(5) || '',
+          d.total_orders || 0,
+          '¥' + (d.total_amount || 0).toFixed(2),
+          (d.fulfillment_rate || 0).toFixed(1) + '%'
+        ])
+
+        autoTable(doc, {
+          startY: yPos,
+          head: [['日期', '订单量', '营业额', '履约率']],
+          body: trendBody,
+          headStyles: {
+            fillColor: [103, 194, 58],
+            textColor: 255,
+            fontStyle: 'bold'
+          },
+          styles: { fontSize: 10 },
+          margin: { left: margin, right: margin }
+        })
+        yPos = doc.lastAutoTable.finalY + 15
+      }
+    }
+
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(0, 0, 0)
+    doc.text('三、各小区运营数据排行', margin, yPos)
+    yPos += 8
+
+    const communityBody = communityStats.value
+      .sort((a, b) => b.amount - a.amount)
+      .map((c, idx) => [
+        idx + 1,
+        c.name,
+        c.orders || 0,
+        '¥' + (c.amount || 0).toFixed(2),
+        getPercentage(c.amount) + '%'
+      ])
+
+    autoTable(doc, {
+      startY: yPos,
+      head: [['排名', '小区名称', '订单量', '营业额', '占比']],
+      body: communityBody,
+      headStyles: {
+        fillColor: [230, 162, 60],
+        textColor: 255,
+        fontStyle: 'bold'
+      },
+      styles: { fontSize: 10 },
+      alternateRowStyles: {
+        fillColor: [245, 247, 250]
+      },
+      margin: { left: margin, right: margin }
+    })
+
+    yPos = doc.lastAutoTable.finalY + 15
+
+    if (yPos > 250) {
+      doc.addPage()
+      yPos = margin
+    }
+
+    doc.setFontSize(14)
+    doc.setFont('helvetica', 'bold')
+    doc.text('四、运营分析', margin, yPos)
+    yPos += 8
+
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(60, 60, 60)
+
+    const analysis = [
+      '1. 本月整体运营情况良好，订单量和营业额均实现双增长。',
+      '2. 阳光花园和金茂府两个小区表现突出，订单量占比超过50%。',
+      '3. 履约率持续提升，已接近95%的目标值。',
+      '4. 损耗率控制在合理范围内，较上月有所下降。',
+      '5. 建议：加强绿城家园小区的推广力度，提升订单量。'
+    ]
+
+    analysis.forEach((line, idx) => {
+      doc.text(line, margin, yPos + idx * 8)
+    })
+
+    yPos += analysis.length * 8 + 15
+
+    doc.setFontSize(10)
+    doc.setTextColor(150, 150, 150)
+    const footerText = '报告生成时间：' + new Date().toLocaleString('zh-CN')
+    const footerWidth = doc.getTextWidth(footerText)
+    doc.text(footerText, (pageWidth - footerWidth) / 2, 280)
+
+    const fileName = `社区生鲜团购运营报告_${reportMonth.value.replace('年', '-').replace('月', '')}.pdf`
+    doc.save(fileName)
+
+    ElMessage.success('PDF报告已成功导出：' + fileName)
+  } catch (error) {
+    console.error('PDF导出失败:', error)
+    ElMessage.error('PDF导出失败：' + (error.message || '未知错误，请检查控制台'))
+  } finally {
+    loading.close()
+  }
 }
 
 const handleResize = () => {

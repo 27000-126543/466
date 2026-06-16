@@ -36,7 +36,7 @@
     </div>
 
     <div class="table-container">
-      <el-table :data="refundApprovals" v-loading="loading" stripe>
+      <el-table :data="filteredApprovals" v-loading="loading" stripe>
         <el-table-column prop="after_sale_no" label="售后单号" width="140" />
         <el-table-column prop="order_no" label="关联订单" width="140" />
         <el-table-column prop="leader_name" label="申请团长" width="100" />
@@ -151,6 +151,17 @@ const approvalComment = ref('')
 
 const pendingCount = computed(() => {
   return refundApprovals.value.filter(a => a.status === 'pending_approval').length
+})
+
+const filteredApprovals = computed(() => {
+  let list = refundApprovals.value
+  if (filterForm.status) {
+    list = list.filter(a => a.status === filterForm.status)
+  }
+  if (filterForm.leaderId) {
+    list = list.filter(a => a.leader_id === filterForm.leaderId)
+  }
+  return list
 })
 
 async function loadApprovals() {

@@ -8,6 +8,8 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!user.value)
   const userRole = computed(() => user.value?.role || '')
   const userName = computed(() => user.value?.name || '')
+  const leaderId = computed(() => user.value?.leader_id || null)
+  const userId = computed(() => user.value?.id || null)
 
   function login(userData) {
     user.value = userData
@@ -21,12 +23,24 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('user')
   }
 
-  function initFromStorage() {
+  async function initFromStorage() {
     const saved = localStorage.getItem('user')
     if (saved) {
       try {
-        user.value = JSON.parse(saved)
+        const savedUser = JSON.parse(saved)
+        user.value = savedUser
         token.value = 'mock-token-' + Date.now()
+        if (savedUser.role === 'leader' && !savedUser.leader_id && window.electronAPI) {
+          try {
+            const result = await window.electronAPI.login(savedUser.username, savedUser.password || '')
+            if (result && result.success && result.user) {
+              user.value = result.user
+              localStorage.setItem('user', JSON.stringify(result.user))
+            }
+          } catch (e) {
+            console.warn('重新获取团长信息失败:', e)
+          }
+        }
       } catch (e) {
         console.error('Failed to parse saved user:', e)
       }
@@ -39,6 +53,8 @@ export const useUserStore = defineStore('user', () => {
     isLoggedIn,
     userRole,
     userName,
+    leaderId,
+    userId,
     login,
     logout,
     initFromStorage

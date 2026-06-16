@@ -133,10 +133,29 @@
           </el-descriptions-item>
           <el-descriptions-item label="申请时间">{{ currentAfterSale.created_at }}</el-descriptions-item>
           <el-descriptions-item label="申请原因" :span="2">{{ currentAfterSale.reason }}</el-descriptions-item>
-          <el-descriptions-item v-if="currentAfterSale.approval_comment" label="审批意见" :span="2">
-            {{ currentAfterSale.approval_comment }}
-          </el-descriptions-item>
         </el-descriptions>
+
+        <div v-if="currentAfterSale.needs_approval" class="approval-progress">
+          <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #303133;">退款审批进度</h4>
+          <el-steps :active="getApprovalStep(currentAfterSale.status)" finish-status="success">
+            <el-step title="提交申请" description="等待主管审核" />
+            <el-step 
+              :title="currentAfterSale.status === 'rejected' ? '审批拒绝' : '审批完成'" 
+              :description="getApprovalDescription(currentAfterSale)"
+            />
+          </el-steps>
+        </div>
+
+        <div v-if="currentAfterSale.approval_comment" class="approval-comment">
+          <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #303133;">审批意见</h4>
+          <el-alert
+            :title="currentAfterSale.status === 'approved' ? '已通过' : '已拒绝'"
+            :description="currentAfterSale.approval_comment"
+            :type="currentAfterSale.status === 'approved' ? 'success' : 'error'"
+            show-icon
+            :closable="false"
+          />
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -174,7 +193,12 @@ async function loadAfterSales() {
   loading.value = true
   try {
     if (window.electronAPI) {
-      const leaderId = userStore.userRole === 'leader' ? userStore.user.id : null
+      const leaderId = userStore.userRole === 'leader' ? userStore.leaderId : null
+      if (userStore.userRole === 'leader' && !leaderId) {
+        ElMessage.warning('团长信息异常，请重新登录')
+        afterSales.value = []
+        return
+      }
       afterSales.value = await window.electronAPI.getAfterSales(leaderId)
     } else {
       afterSales.value = generateMockData()
@@ -245,6 +269,25 @@ function processAfterSale(row) {
   ElMessage.success('已开始处理')
 }
 
+function getApprovalStep(status) {
+  if (status === 'pending_approval') return 0
+  if (status === 'approved' || status === 'rejected') return 1
+  return 0
+}
+
+function getApprovalDescription(afterSale) {
+  if (afterSale.status === 'pending_approval') {
+    return '运营主管审核中...'
+  }
+  if (afterSale.status === 'approved') {
+    return '退款已通过，即将处理'
+  }
+  if (afterSale.status === 'rejected') {
+    return afterSale.approval_comment || '未通过审核'
+  }
+  return ''
+}
+
 async function submitApply() {
   if (!applyForm.order_id) {
     ElMessage.warning('请选择订单')
@@ -255,10 +298,16 @@ async function submitApply() {
     return
   }
 
+  const leaderId = userStore.leaderId
+  if (!leaderId) {
+    ElMessage.warning('团长信息异常，请重新登录')
+    return
+  }
+
   if (window.electronAPI) {
     const result = await window.electronAPI.createAfterSale({
       ...applyForm,
-      leader_id: userStore.user.id
+      leader_id: leaderId
     })
     if (result.success) {
       ElMessage.success(applyForm.amount > 50 ? '申请已提交，等待主管审批' : '申请已提交')
@@ -272,12 +321,25 @@ async function submitApply() {
   }
 }
 
-function loadMyOrders() {
-  myOrders.value = Array.from({ length: 10 }, (_, i) => ({
-    id: i + 1,
-    order_no: 'DD' + (240001 + i),
-    total_amount: (Math.random() * 150 + 30).toFixed(2)
-  }))
+async function loadMyOrders() {
+  if (window.electronAPI && userStore.leaderId) {
+    try {
+      const result = await window.electronAPI.getOrders({
+        leaderId: userStore.leaderId,
+        pageSize: 100
+      })
+      myOrders.value = result.list || []
+    } catch (e) {
+      console.error('加载订单失败:', e)
+      myOrders.value = []
+    }
+  } else {
+    myOrders.value = Array.from({ length: 10 }, (_, i) => ({
+      id: i + 1,
+      order_no: 'DD' + (240001 + i),
+      total_amount: (Math.random() * 150 + 30).toFixed(2)
+    }))
+  }
 }
 
 onMounted(() => {
@@ -290,5 +352,16 @@ onMounted(() => {
 .header-actions {
   display: flex;
   gap: 10px;
+}
+
+.approval-progress {
+  padding: 16px;
+  background: #f5f7fa;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.approval-comment {
+  margin-top: 16px;
 }
 </style>

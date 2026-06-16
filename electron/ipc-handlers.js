@@ -11,6 +11,12 @@ function handleIPC() {
     const user = db.prepare('SELECT * FROM users WHERE username = ? AND password = ?').get(username, password)
     if (user) {
       delete user.password
+      if (user.role === 'leader') {
+        const leader = db.prepare('SELECT id as leader_id FROM leaders WHERE user_id = ?').get(user.id)
+        if (leader) {
+          user.leader_id = leader.leader_id
+        }
+      }
       return { success: true, user }
     }
     return { success: false, message: '用户名或密码错误' }
@@ -735,7 +741,7 @@ function handleIPC() {
       FROM after_sales a
       LEFT JOIN orders o ON a.order_id = o.id
       LEFT JOIN leaders l ON a.leader_id = l.id
-      WHERE a.needs_approval = 1 AND a.status = 'pending_approval'
+      WHERE a.needs_approval = 1
       ORDER BY a.created_at DESC
     `).all()
   })

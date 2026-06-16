@@ -213,7 +213,13 @@ async function loadOrders() {
   loading.value = true
   try {
     if (window.electronAPI) {
-      const leaderId = userStore.user?.id || 1
+      const leaderId = userStore.leaderId
+      if (!leaderId) {
+        ElMessage.warning('团长信息异常，请重新登录')
+        orders.value = []
+        pagination.total = 0
+        return
+      }
       const result = await window.electronAPI.getOrders({
         leaderId,
         status: filterForm.status || undefined,

@@ -100,6 +100,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick, watch, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
+import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { Money, Document, TrendCharts } from '@element-plus/icons-vue'
 
@@ -131,7 +132,13 @@ async function loadProfit() {
   loading.value = true
   try {
     if (window.electronAPI) {
-      const leaderId = userStore.user?.id || 1
+      const leaderId = userStore.leaderId
+      if (!leaderId) {
+        ElMessage.warning('团长信息异常，请重新登录')
+        profitData.value = { totalProfit: 0, orderCount: 0, records: [] }
+        profitRecords.value = []
+        return
+      }
       const monthStr = selectedMonth.value.toISOString?.().slice(0, 7) || 
                        new Date(selectedMonth.value).toISOString().slice(0, 7)
       const data = await window.electronAPI.getLeaderProfit(leaderId, monthStr)
