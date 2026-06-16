@@ -1,0 +1,49 @@
+{
+  "name": "fresh-group-purchase-system",
+  "version": "1.0.0",
+  "description": "社区生鲜团购智能调度与库存管理桌面系统",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
+    "electron:build": "vite build && electron-builder",
+    "start": "concurrently -k \"npm run dev\" \"npm run electron\""
+  },
+  "dependencies": {
+    "sql.js": "^1.10.3",
+    "echarts": "^5.5.0",
+    "element-plus": "^2.5.6",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "pinia": "^2.1.7",
+    "vue": "^3.4.21",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^29.1.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.1.5",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.fresh.purchase.system",
+    "productName": "社区生鲜团购管理系统",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
